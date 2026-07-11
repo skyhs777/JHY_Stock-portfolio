@@ -2,8 +2,10 @@ name: Update Portfolio Report
 
 on:
   schedule:
+    # UTC 기준. 0-7시(UTC) = 한국시간 9시~16시, 평일에 30분마다 실행
+    # 필요하면 이 cron 표현식만 바꾸면 주기를 조정할 수 있습니다.
     - cron: '*/30 0-7 * * 1-5'
-  workflow_dispatch: {}
+  workflow_dispatch: {}   # Actions 탭에서 수동으로도 실행 가능
 
 permissions:
   contents: read
@@ -29,22 +31,16 @@ jobs:
       - name: 패키지 설치
         run: pip install -r requirements.txt
 
-      - name: 카카오 토큰 복원 (시크릿 -> 파일)
-        run: |
-          if [ -n "${{ secrets.KAKAO_TOKEN_JSON }}" ]; then
-            echo '${{ secrets.KAKAO_TOKEN_JSON }}' > kakao_token.json
-          fi
-
-      - name: 리포트 생성
+      - name: HTML 리포트 생성 (카카오톡은 보내지 않음, 별도 워크플로에서 처리)
         env:
           HOLDINGS_JSON: ${{ secrets.HOLDINGS_JSON }}
-          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          CASH_JSON: ${{ secrets.CASH_JSON }}
         run: python main.py
 
       - name: Pages 설정
         uses: actions/configure-pages@v5
 
-      - name: 빌드 결과물 업로드
+      - name: 빌드 결과물(docs) 업로드
         uses: actions/upload-pages-artifact@v3
         with:
           path: stock_alert/docs
