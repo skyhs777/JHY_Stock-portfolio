@@ -28,6 +28,19 @@ def load_holdings():
     return HOLDINGS
 
 
+def load_cash():
+    """예수금(현금) 목록. 형식: [{"account":"연금저축","amount":500000}, ...]
+    CASH_JSON 시크릿이 없으면 빈 리스트."""
+    env_json = os.environ.get("CASH_JSON")
+    if env_json:
+        return json.loads(env_json)
+    try:
+        from config import CASH
+        return CASH
+    except ImportError:
+        return []
+
+
 def load_kakao_key():
     env_key = os.environ.get("KAKAO_REST_API_KEY")
     if env_key:
@@ -39,7 +52,8 @@ def load_kakao_key():
         return None
 
 
-def build_portfolio(holdings):
+def build_portfolio(holdings, cash_list=None):
+    cash_list = cash_list or []
     rows = []
     total_value = 0
     for h in holdings:
@@ -56,9 +70,28 @@ def build_portfolio(holdings):
         rows.append({
             **h,
             "account": h.get("account", "연금저축"),
+            "sector": h.get("sector", "미분류"),
             "current_price": current_price,
             "value": value,
             "fetch_failed": fetch_failed,
+            "is_cash": False,
+        })
+
+    # 예수금은 시세 조회 없이 그대로 평가금액에 반영되는 가상의 종목으로 취급
+    for c in cash_list:
+        value = c["amount"]
+        total_value += value
+        rows.append({
+            "name": "예수금",
+            "code": "-",
+            "qty": 1,
+            "avg_price": value,
+            "current_price": value,
+            "account": c.get("account", "연금저축"),
+            "sector": "예수금",
+            "value": value,
+            "fetch_failed": False,
+            "is_cash": True,
         })
 
     for r in rows:
@@ -114,11 +147,73 @@ def build_pie_chart(rows) -> str:
     </div>"""
 
 
+def build_sector_chart(rows) -> str:
+    """종목의 sector 필드로 그룹핑해서 섹터별 비중 도넛차트를 만든다."""
+    sector_values = {}
+    for row in rows:
+        sector_values[row["sector"]] = sector_values.get(row["sector"], 0) + row["value"]
+    total = sum(sector_values.values()) or 1
+
+    size = 220
+    r = 80
+    stroke = 34
+    cx = cy = size / 2
+    circumference = 2 * 3.14159265 * r
+
+    segments_svg = ""
+    legend_html = ""
+    cumulative = 0
+    for i, (sector, value) in enumerate(sector_values.items()):
+        weight = value / total * 100
+        color = PALETTE[i % len(PALETTE)]
+        dash = (weight / 100) * circumference
+        gap = circumference - dash
+        offset = -cumulative
+        segments_svg += (
+            f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" '
+            f'stroke-width="{stroke}" stroke-dasharray="{dash:.2f} {gap:.2f}" '
+            f'stroke-dashoffset="{offset:.2f}" transform="rotate(-90 {cx} {cy})" />'
+        )
+        cumulative += dash
+        legend_html += (
+            f'<div class="legend-item">'
+            f'<span class="legend-dot" style="background:{color}"></span>'
+            f'{sector} <b>{weight:.1f}%</b>'
+            f'</div>'
+        )
+
+    svg = f"""
+    <svg viewBox="0 0 {size} {size}" width="220" height="220">
+      {segments_svg}
+    </svg>"""
+
+    return f"""
+    <div class="pie-wrap">
+      {svg}
+      <div class="legend">{legend_html}</div>
+    </div>"""
+
+
 def build_html(rows, total_value) -> str:
     today = datetime.now().strftime("%Y-%m-%d %H:%M")
     rows_html = ""
 
     for r in rows:
+        if r.get("is_cash"):
+            rows_html += f"""
+        <tr class="cash-row">
+          <td class="account-tag">{r['account']}</td>
+          <td>{r['name']}<div class="code">현금성자산</div></td>
+          <td class="num">-</td>
+          <td class="num">-</td>
+          <td class="num">{r['current_price']:,}원</td>
+          <td class="num">-</td>
+          <td class="num">{r['value']:,}원</td>
+          <td class="num">{r['weight']:.1f}%</td>
+          <td class="news">-</td>
+        </tr>"""
+            continue
+
         profit_rate = (r["current_price"] - r["avg_price"]) / r["avg_price"] * 100
         color = "#d64545" if profit_rate >= 0 else "#3b6fd6"
         arrow = "▲" if profit_rate >= 0 else "▼"
@@ -145,6 +240,7 @@ def build_html(rows, total_value) -> str:
         </tr>"""
 
     pie_html = build_pie_chart(rows)
+    sector_html = build_sector_chart(rows)
 
     # 계좌별 소계 (계좌가 2개 이상일 때만 카드로 표시)
     account_totals = {}
@@ -188,6 +284,8 @@ def build_html(rows, total_value) -> str:
   .account-card {{ background:#fff; border-radius:12px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.08); flex:1; min-width:140px; }}
   .account-card .account-name {{ color:#888; font-size:12px; margin-bottom:4px; }}
   .account-card .account-value {{ font-size:18px; font-weight:700; }}
+  .section-title {{ font-size:14px; font-weight:600; color:#555; margin:0 0 8px 4px; }}
+  .cash-row td {{ color:#888; font-style:italic; }}
 </style>
 </head>
 <body>
@@ -196,11 +294,17 @@ def build_html(rows, total_value) -> str:
     <div class="date">{today} 기준</div>
   </div>
   <div class="summary">
-    <div>총 평가금액</div>
+    <div>총 평가금액 (예수금 포함)</div>
     <div class="total">{total_value:,}원</div>
   </div>
   <div class="account-cards">{account_cards_html}</div>
+
+  <div class="section-title">종목별 비중</div>
   {pie_html}
+
+  <div class="section-title">섹터별 비중</div>
+  {sector_html}
+
   <table>
     <thead>
       <tr>
@@ -228,9 +332,10 @@ def build_kakao_text(rows, total_value) -> str:
 
 def main():
     holdings = load_holdings()
+    cash_list = load_cash()
     kakao_key = load_kakao_key()
 
-    rows, total_value = build_portfolio(holdings)
+    rows, total_value = build_portfolio(holdings, cash_list)
 
     html = build_html(rows, total_value)
 
