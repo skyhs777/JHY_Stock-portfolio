@@ -1,0 +1,54 @@
+name: Update Portfolio Report
+
+on:
+  schedule:
+    - cron: '*/30 0-7 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+defaults:
+  run:
+    working-directory: stock_alert
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 카카오 토큰 복원 (시크릿 -> 파일)
+        run: |
+          if [ -n "${{ secrets.KAKAO_TOKEN_JSON }}" ]; then
+            echo '${{ secrets.KAKAO_TOKEN_JSON }}' > kakao_token.json
+          fi
+
+      - name: 리포트 생성
+        env:
+          HOLDINGS_JSON: ${{ secrets.HOLDINGS_JSON }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+        run: python main.py
+
+      - name: Pages 설정
+        uses: actions/configure-pages@v5
+
+      - name: 빌드 결과물 업로드
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: stock_alert/docs
+
+      - name: GitHub Pages로 배포
+        id: deployment
+        uses: actions/deploy-pages@v4
