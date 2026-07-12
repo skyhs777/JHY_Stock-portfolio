@@ -1,0 +1,39 @@
+name: Kakao Briefing (US stocks)
+
+on:
+  schedule:
+    # UTC 23:30(월~금) = 한국시간(KST) 다음날 08:30(화~토)
+    - cron: '30 23 * * 1-5'
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    working-directory: stock_alert
+
+jobs:
+  send-kakao-us:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 카카오 토큰 복원 (시크릿 -> 파일)
+        run: |
+          if [ -n "${{ secrets.KAKAO_TOKEN_JSON }}" ]; then
+            echo '${{ secrets.KAKAO_TOKEN_JSON }}' > kakao_token.json
+          fi
+
+      - name: 미국주식 카카오톡 발송
+        env:
+          HOLDINGS_JSON: ${{ secrets.HOLDINGS_JSON }}
+          CASH_JSON: ${{ secrets.CASH_JSON }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+        run: python main.py --skip-html --send-kakao us
